@@ -1,0 +1,315 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#101820">
+<title>BASAM Chess</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:#101820;
+  color:#f4f6f8;
+  font-family:Arial,Tahoma,sans-serif;
+}
+button,input,select{font:inherit}
+button{
+  border:0;
+  cursor:pointer;
+  border-radius:10px;
+  padding:11px 16px;
+  background:#16a085;
+  color:white;
+  font-weight:bold;
+}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select{
+  background:#182630;
+  color:white;
+  border:1px solid #344653;
+  border-radius:10px;
+  padding:12px;
+  min-width:0;
+}
+.wrap{max-width:1150px;margin:auto;padding:18px}
+.head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:20px;
+}
+.logo{font-size:27px;font-weight:900;letter-spacing:1px}
+.logo span{color:#20c997}
+.subtitle{color:#91a4b2;font-size:13px;margin-top:5px}
+.panel{
+  background:#17232d;
+  border:1px solid #293b49;
+  border-radius:16px;
+  padding:17px;
+  margin-bottom:16px;
+}
+h2{font-size:18px;margin:0 0 14px}
+.controls{
+  display:flex;
+  gap:9px;
+  flex-wrap:wrap;
+}
+.controls input{flex:1;min-width:160px}
+.notice{
+  color:#aebdc8;
+  font-size:13px;
+  margin-top:12px;
+  line-height:1.7;
+}
+.games{display:grid;gap:9px;margin-top:12px}
+.game{
+  background:#20313d;
+  border:1px solid #344957;
+  border-radius:11px;
+  padding:13px;
+  cursor:pointer;
+}
+.game:hover{border-color:#20c997}
+.hidden{display:none!important}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.grow{flex:1}
+#review{margin-top:18px}
+.game-heading{margin-bottom:15px}
+.game-heading h2{margin-bottom:6px}
+#gameMeta{font-size:13px;color:#aebdc8}
+.layout{
+  display:grid;
+  grid-template-columns:minmax(0,1.35fr) minmax(280px,.85fr);
+  gap:17px;
+  align-items:start;
+}
+.board-wrap{width:100%;max-width:650px;margin:auto}
+.board{
+  width:100%;
+  aspect-ratio:1/1;
+  display:grid;
+  grid-template-columns:repeat(8,1fr);
+  grid-template-rows:repeat(8,1fr);
+  overflow:hidden;
+  border-radius:5px;
+  box-shadow:0 8px 28px #0006;
+  direction:ltr;
+}
+.sq{
+  position:relative;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  min-width:0;
+  min-height:0;
+  aspect-ratio:1;
+}
+.sq.light{background:#eeeed2}
+.sq.dark{background:#769656}
+.piece-img{
+  width:90%;
+  height:90%;
+  object-fit:contain;
+  position:relative;
+  z-index:2;
+  pointer-events:none;
+}
+.move-mark{
+  position:absolute;
+  width:35%;
+  height:35%;
+  border-radius:50%;
+  background:rgba(0,145,255,.58);
+  border:2px solid rgba(255,255,255,.65);
+  z-index:3;
+  pointer-events:none;
+  box-shadow:0 0 9px #008cff;
+}
+.stats{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:9px;
+  margin:15px 0;
+}
+.stat{
+  background:#20313d;
+  border-radius:12px;
+  padding:13px 8px;
+  text-align:center;
+}
+.stat strong{display:block;font-size:23px;margin-top:5px}
+.stat span{font-size:12px;color:#aebdc8}
+.moves{
+  max-height:460px;
+  overflow:auto;
+  display:grid;
+  gap:7px;
+}
+.move{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  background:#20313d;
+  border:1px solid transparent;
+  border-radius:9px;
+  padding:10px;
+  cursor:pointer;
+}
+.move:hover{background:#2a3e4b}
+.move.active{border-color:#20c997;background:#263d47}
+.tag{
+  border-radius:6px;
+  padding:5px 8px;
+  font-size:11px;
+  font-weight:bold;
+  white-space:nowrap;
+}
+.brilliant{background:#087fbd;color:white}
+.great{background:#147d55;color:white}
+.best{background:#188b61;color:white}
+.excellent{background:#286caa;color:white}
+.good{background:#526b7b;color:white}
+.book{background:#6653a5;color:white}
+.inaccuracy{background:#c49a24;color:#171717}
+.mistake{background:#d87927;color:white}
+.blunder{background:#c0392b;color:white}
+.miss{background:#9b3030;color:white}
+.progress{
+  height:9px;
+  background:#293b49;
+  border-radius:20px;
+  overflow:hidden;
+  margin-top:12px;
+}
+#bar{
+  height:100%;
+  width:0%;
+  background:#20c997;
+  transition:width .25s;
+}
+#progressText{font-size:12px;color:#aebdc8;margin-top:8px}
+.navigation{display:flex;align-items:center;gap:10px;margin-top:13px}
+.navigation button{flex:1}
+#plyLabel{font-weight:bold;color:#dce6ed;min-width:65px;text-align:center}
+#status{line-height:1.7}
+@media(max-width:760px){
+  .wrap{padding:12px}
+  .layout{grid-template-columns:1fr}
+  .board-wrap{max-width:100%}
+  .head{align-items:flex-start}
+  .logo{font-size:23px}
+  .panel{padding:13px}
+}
+</style>
+
+<script src="/static/app.js" defer></script>
+</head>
+
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <div>
+      <div class="logo">BASAM <span>CHESS</span></div>
+      <div class="subtitle">Chess Game Review & Analysis</div>
+    </div>
+    <div class="tag best">STOCKFISH ANALYSIS</div>
+  </header>
+
+  <section class="panel">
+    <h2>البحث عن لاعب Chess.com</h2>
+    <div class="controls">
+      <input id="username" type="text"
+        placeholder="اكتب اسم لاعب Chess.com"
+        autocomplete="off">
+      <button id="load">عرض المباريات</button>
+      <select id="month">
+        <option value="">كل الأشهر</option>
+      </select>
+    </div>
+    <div id="status" class="notice">
+      أدخل اسم اللاعب لعرض مبارياته العامة.
+    </div>
+    <div id="games" class="games"></div>
+  </section>
+
+  <section id="review" class="hidden">
+
+    <div class="panel game-heading">
+      <h2 id="gameTitle">مراجعة المباراة</h2>
+      <div id="gameMeta"></div>
+    </div>
+
+    <div class="layout">
+
+      <div>
+        <section class="panel">
+          <div class="row">
+            <h2 class="grow">رقعة الشطرنج</h2>
+            <button id="analyze">تحليل المباراة</button>
+          </div>
+
+          <div class="board-wrap">
+            <div id="board" class="board"></div>
+          </div>
+
+          <div class="navigation">
+            <button id="prev">السابق</button>
+            <div id="plyLabel">0 / 0</div>
+            <button id="next">التالي</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>إحصائيات المباراة</h2>
+          <div class="stats">
+            <div class="stat">
+              <span>أخطاء فادحة</span>
+              <strong id="blunders">0</strong>
+            </div>
+            <div class="stat">
+              <span>أخطاء</span>
+              <strong id="mistakes">0</strong>
+            </div>
+            <div class="stat">
+              <span>الدقة</span>
+              <strong id="accuracy">—</strong>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div>
+        <section class="panel">
+          <h2>تحليل النقلات</h2>
+          <div id="moveList" class="moves">
+            <div class="notice">
+              اختر مباراة ثم ابدأ التحليل لعرض تقييم النقلات.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>تقدم التحليل</h2>
+          <div class="progress">
+            <div id="bar"></div>
+          </div>
+          <div id="progressText">بانتظار بدء التحليل</div>
+        </section>
+      </div>
+
+    </div>
+  </section>
+
+  <footer class="notice" style="text-align:center;padding:20px">
+    BASAM CHESS · Game Review
+  </footer>
+
+</div>
+</body>
+</html>
