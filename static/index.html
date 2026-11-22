@@ -4,162 +4,338 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1118">
 <title>BASAM — Chess Review</title>
 
 <style>
-:root{
-color-scheme:dark;
---bg:#0b1118;
---panel:#131d28;
---line:#263545;
---muted:#9aabba;
---text:#eef5fb;
---accent:#55d6a5;
---red:#ff7777;
---yellow:#ffd166
-}
-*{box-sizing:border-box}
-body{
-margin:0;
-background:radial-gradient(circle at 15% 0,#172a37 0,transparent 35%),var(--bg);
-color:var(--text);
-font:15px system-ui,-apple-system,"Segoe UI",sans-serif
-}
-.wrap{max-width:1100px;margin:auto;padding:24px}
-.head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:22px}
-.brand{font-size:27px;font-weight:900;letter-spacing:2px}
-.brand span{color:var(--accent)}
-.sub,.muted{color:var(--muted)}
-.panel{
-background:linear-gradient(145deg,#172330,#111a24);
-border:1px solid var(--line);
-border-radius:18px;
-padding:18px;
-margin:14px 0;
-box-shadow:0 10px 35px #0003
-}
-.controls{display:grid;grid-template-columns:1fr auto auto;gap:10px}
-input,select,button{
-border-radius:11px;
-border:1px solid var(--line);
-background:#0d1620;
-color:var(--text);
-padding:12px;
-font:inherit;
-min-width:0
-}
-button{
-cursor:pointer;
-background:var(--accent);
-color:#082016;
-border:0;
-font-weight:800
-}
-button:disabled{opacity:.45;cursor:not-allowed}
-.secondary{background:#243545;color:var(--text);border:1px solid #34495d}
-.games{display:grid;gap:8px;max-height:310px;overflow:auto}
-.game{
-display:flex;
-justify-content:space-between;
-align-items:center;
-gap:10px;
-text-align:right;
-background:#0e1822;
-border:1px solid var(--line);
-padding:12px;
-border-radius:12px;
-cursor:pointer
-}
-.game.active{border-color:var(--accent);background:#132a29}
-.layout{display:grid;grid-template-columns:minmax(260px,390px) 1fr;gap:15px}
-.board{
-display:grid;
-box-sizing:border-box;
-width:min(100%,520px);
-max-width:520px;
-aspect-ratio:1;
-height:auto;
-grid-template-columns:repeat(8,minmax(0,1fr));
-grid-template-rows:repeat(8,minmax(0,1fr));
-gap:0;
-padding:0;
-border:0;
-border-radius:7px;
-overflow:hidden;
-direction:ltr;
-box-shadow:0 10px 28px #0005;
-margin-inline:auto;
-flex:none;
-align-self:start;
-touch-action:pan-y
-}
-.sq{
-display:flex;
-align-items:center;
-justify-content:center;
-position:relative;
-min-width:0;
-min-height:0;
-width:100%;
-height:100%;
-aspect-ratio:auto;
-padding:0;
-margin:0;
-overflow:hidden;
-user-select:none;
-box-sizing:border-box
-}
-.light{background:#eeeed2}
-.dark{background:#769656}
-
-/* صور القطع بدون علامات أو مؤثرات */
-.piece-img{
-display:block;
-width:94%;
-height:94%;
-max-width:94%;
-max-height:94%;
-object-fit:contain;
-pointer-events:none;
-user-select:none;
-transform:none !important;
-transition:none !important;
-animation:none !important;
-filter:none !important;
+:root {
+  color-scheme: dark;
+  --bg: #0b1118;
+  --panel: #131d28;
+  --line: #263545;
+  --muted: #9aabba;
+  --text: #eef5fb;
+  --accent: #55d6a5;
+  --red: #ff7777;
+  --yellow: #ffd166;
 }
 
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.stat{background:#0d1721;border:1px solid var(--line);border-radius:12px;padding:12px}
-.stat b{display:block;font-size:22px;margin-top:4px}
-.moves{max-height:400px;overflow:auto;display:grid;gap:7px}
-.move{
-display:grid;
-grid-template-columns:48px 1fr 1fr;
-gap:8px;
-align-items:center;
-background:#0d1721;
-border:1px solid var(--line);
-padding:9px;
-border-radius:10px
+* {
+  box-sizing: border-box;
 }
-.move button{padding:7px;background:#203342;color:var(--text)}
-.tag{font-size:12px;padding:4px 8px;border-radius:20px;background:#263747;color:#d7e4ed}
-.blunder{color:#ff7777}
-.mistake{color:#ffd166}
-.good{color:#55d6a5}
-.progress{height:8px;background:#263747;border-radius:20px;overflow:hidden;margin:12px 0}
-.bar{height:100%;width:0;background:var(--accent);transition:width .2s}
-.notice{color:var(--muted);font-size:13px;line-height:1.7}
-.hidden{display:none}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.grow{flex:1}
-@media(max-width:760px){
-.wrap{padding:14px}
-.controls{grid-template-columns:1fr 1fr}
-.controls input{grid-column:1/-1}
-.layout{grid-template-columns:1fr}
-.head{align-items:flex-start}
-.stats{grid-template-columns:repeat(3,1fr)}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 15% 0, #172a37 0, transparent 35%),
+    var(--bg);
+  color: var(--text);
+  font: 15px system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.wrap {
+  max-width: 1100px;
+  margin: auto;
+  padding: 24px;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 22px;
+}
+
+.brand {
+  font-size: 27px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.brand span {
+  color: var(--accent);
+}
+
+.sub,
+.muted {
+  color: var(--muted);
+}
+
+.panel {
+  background: linear-gradient(145deg, #172330, #111a24);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+  margin: 14px 0;
+  box-shadow: 0 10px 35px #0003;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+}
+
+input,
+select,
+button {
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: #0d1620;
+  color: var(--text);
+  padding: 12px;
+  font: inherit;
+  min-width: 0;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #082016;
+  border: 0;
+  font-weight: 800;
+}
+
+button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: #243545;
+  color: var(--text);
+  border: 1px solid #34495d;
+}
+
+.games {
+  display: grid;
+  gap: 8px;
+  max-height: 310px;
+  overflow: auto;
+}
+
+.game {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-align: right;
+  background: #0e1822;
+  border: 1px solid var(--line);
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.game.active {
+  border-color: var(--accent);
+  background: #132a29;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 390px) 1fr;
+  gap: 15px;
+}
+
+/* رقعة الشطرنج */
+.board {
+  display: grid;
+  box-sizing: border-box;
+  width: min(100%, 520px);
+  max-width: 520px;
+  aspect-ratio: 1;
+  height: auto;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(8, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  direction: ltr;
+  box-shadow: 0 10px 28px #0005;
+  margin-inline: auto;
+  flex: none;
+  align-self: start;
+  touch-action: pan-y;
+}
+
+.sq {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.light {
+  background: #eeeed2;
+}
+
+.dark {
+  background: #769656;
+}
+
+/* قطع Neo الأصلية بدون ميلان أو دوران أو ظلال */
+.piece-img {
+  display: block;
+  width: 94%;
+  height: 94%;
+  max-width: 94%;
+  max-height: 94%;
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+  transform: none !important;
+  rotate: 0deg !important;
+  filter: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+/* إخفاء علامات الاستفهام والمؤشرات النصية الزائدة */
+.sq::before,
+.sq::after,
+.piece-img::before,
+.piece-img::after {
+  content: none !important;
+  display: none !important;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.stat {
+  background: #0d1721;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.stat b {
+  display: block;
+  font-size: 22px;
+  margin-top: 4px;
+}
+
+.moves {
+  max-height: 400px;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+}
+
+.move {
+  display: grid;
+  grid-template-columns: 48px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+  background: #0d1721;
+  border: 1px solid var(--line);
+  padding: 9px;
+  border-radius: 10px;
+}
+
+.move button {
+  padding: 7px;
+  background: #203342;
+  color: var(--text);
+}
+
+.tag {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 20px;
+  background: #263747;
+  color: #d7e4ed;
+}
+
+.blunder {
+  color: #ff7777;
+}
+
+.mistake {
+  color: #ffd166;
+}
+
+.good {
+  color: #55d6a5;
+}
+
+.progress {
+  height: 8px;
+  background: #263747;
+  border-radius: 20px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width .2s;
+}
+
+.notice {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.hidden {
+  display: none;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+}
+
+@media (max-width: 760px) {
+  .wrap {
+    padding: 14px;
+  }
+
+  .controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .controls input {
+    grid-column: 1 / -1;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .head {
+    align-items: flex-start;
+  }
+
+  .stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 </style>
 </head>
@@ -168,90 +344,121 @@ border-radius:10px
 <main class="wrap">
 
 <header class="head">
-<div>
-<div class="brand">BASAM<span>.</span></div>
-<div class="sub">مراجع مباريات الشطرنج — قطع Neo من Chess.com · Powered by Stockfish</div>
-</div>
-<span class="tag">BASAM · Stockfish Server</span>
+  <div>
+    <div class="brand">BASAM<span>.</span></div>
+    <div class="sub">
+      مراجع مباريات الشطرنج — قطع Neo من Chess.com · Powered by Stockfish
+    </div>
+  </div>
+  <span class="tag">BASAM · Stockfish Server</span>
 </header>
 
 <section class="panel">
-<h2>1. ابحث عن لاعب Chess.com</h2>
+  <h2>1. ابحث عن لاعب Chess.com</h2>
 
-<div class="controls">
-<input id="username" placeholder="اكتب اسم المستخدم فقط — مثال: Hikaru" autocomplete="off">
-<button id="load" type="button">عرض المباريات</button>
-<select id="month" disabled>
-<option>اختر الشهر</option>
-</select>
-</div>
+  <div class="controls">
+    <input
+      id="username"
+      placeholder="اكتب اسم المستخدم فقط — مثال: Hikaru"
+      autocomplete="off"
+    >
 
-<p id="status" class="notice">
-يعرض الموقع المباريات العامة فقط من Chess.com. لا تحتاج إلى كلمة مرور أو تسجيل دخول.
-</p>
+    <button id="load" type="button">
+      عرض المباريات
+    </button>
 
-<div id="games" class="games"></div>
+    <select id="month" disabled>
+      <option>اختر الشهر</option>
+    </select>
+  </div>
+
+  <p id="status" class="notice">
+    يعرض الموقع المباريات العامة فقط من Chess.com.
+    لا تحتاج إلى كلمة مرور أو تسجيل دخول.
+  </p>
+
+  <div id="games" class="games"></div>
 </section>
 
 <section id="review" class="panel hidden">
-<div class="row">
-<div class="grow">
-<h2 id="gameTitle">مراجعة المباراة</h2>
-<div id="gameMeta" class="notice"></div>
-</div>
-<button id="analyze" type="button">ابدأ التحليل</button>
-</div>
 
-<div class="progress">
-<div class="bar" id="bar"></div>
-</div>
+  <div class="row">
+    <div class="grow">
+      <h2 id="gameTitle">مراجعة المباراة</h2>
+      <div id="gameMeta" class="notice"></div>
+    </div>
 
-<div id="progressText" class="notice">اختر مباراة لبدء المراجعة.</div>
+    <button id="analyze" type="button">
+      ابدأ التحليل
+    </button>
+  </div>
 
-<div class="layout">
-<div>
-<div class="board" id="board"></div>
+  <div class="progress">
+    <div class="bar" id="bar"></div>
+  </div>
 
-<div class="row" style="justify-content:center;margin-top:10px">
-<button class="secondary" id="prev" type="button">السابق</button>
-<span id="plyLabel" class="tag">—</span>
-<button class="secondary" id="next" type="button">التالي</button>
-</div>
+  <div id="progressText" class="notice">
+    اختر مباراة لبدء المراجعة.
+  </div>
 
-<div class="stats" style="margin-top:12px">
-<div class="stat">
-<span class="muted">أخطاء كبيرة</span>
-<b id="blunders">0</b>
-</div>
-<div class="stat">
-<span class="muted">أخطاء</span>
-<b id="mistakes">0</b>
-</div>
-<div class="stat">
-<span class="muted">الدقة التقديرية</span>
-<b id="accuracy">—</b>
-</div>
-</div>
-</div>
+  <div class="layout">
 
-<div>
-<h3>النقلات والتحليل</h3>
-<div id="moveList" class="moves"></div>
-</div>
-</div>
+    <div>
+      <div class="board" id="board"></div>
+
+      <div class="row" style="justify-content:center;margin-top:10px">
+        <button class="secondary" id="prev" type="button">
+          السابق
+        </button>
+
+        <span id="plyLabel" class="tag">—</span>
+
+        <button class="secondary" id="next" type="button">
+          التالي
+        </button>
+      </div>
+
+      <div class="stats" style="margin-top:12px">
+
+        <div class="stat">
+          <span class="muted">أخطاء كبيرة</span>
+          <b id="blunders">0</b>
+        </div>
+
+        <div class="stat">
+          <span class="muted">أخطاء</span>
+          <b id="mistakes">0</b>
+        </div>
+
+        <div class="stat">
+          <span class="muted">الدقة التقديرية</span>
+          <b id="accuracy">—</b>
+        </div>
+
+      </div>
+    </div>
+
+    <div>
+      <h3>النقلات والتحليل</h3>
+      <div id="moveList" class="moves"></div>
+    </div>
+
+  </div>
 </section>
 
 <section class="panel">
-<b>ملاحظات مهمة</b>
-<p class="notice">
-المحرك يعمل على خادم BASAM باستخدام Python وStockfish،
-ولا يحتاج المتصفح إلى تحميل ملفات المحرك.
-يلزم اتصال بالإنترنت لجلب المباريات العامة من Chess.com وصور قطع Neo.
-قد يستغرق التحليل وقتاً حسب طول المباراة وموارد الاستضافة.
-</p>
-<p class="notice">
-BASAM مشروع مستقل وغير تابع لـ Chess.com أو فريق Stockfish.
-</p>
+  <b>ملاحظات مهمة</b>
+
+  <p class="notice">
+    المحرك يعمل على خادم BASAM باستخدام Python وStockfish،
+    ولا يحتاج المتصفح إلى تحميل ملفات المحرك.
+    يلزم اتصال بالإنترنت لجلب المباريات العامة من Chess.com وصور قطع Neo.
+    قد يستغرق التحليل وقتاً حسب طول المباراة وموارد الاستضافة.
+  </p>
+
+  <p class="notice">
+    BASAM مشروع مستقل وغير تابع لـ Chess.com أو فريق Stockfish.
+  </p>
 </section>
 
 </main>
