@@ -90,7 +90,8 @@ direction:ltr;
 box-shadow:0 10px 28px #0005;
 margin-inline:auto;
 flex:none;
-align-self:start
+align-self:start;
+touch-action:pan-y
 }
 .sq{
 display:flex;
@@ -110,6 +111,8 @@ box-sizing:border-box
 }
 .light{background:#eeeed2}
 .dark{background:#769656}
+
+/* صور القطع بدون علامات أو مؤثرات */
 .piece-img{
 display:block;
 width:94%;
@@ -119,9 +122,12 @@ max-height:94%;
 object-fit:contain;
 pointer-events:none;
 user-select:none;
-filter:drop-shadow(0 1px 1px #0002)
+transform:none !important;
+transition:none !important;
+animation:none !important;
+filter:none !important;
 }
-.board{touch-action:pan-y}
+
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .stat{background:#0d1721;border:1px solid var(--line);border-radius:12px;padding:12px}
 .stat b{display:block;font-size:22px;margin-top:4px}
@@ -252,4 +258,5 @@ BASAM مشروع مستقل وغير تابع لـ Chess.com أو فريق Stock
 
 <script src="/static/app.js" defer></script>
 </body>
+</html>
 </html>
