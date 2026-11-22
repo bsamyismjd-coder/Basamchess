@@ -1,3 +1,4 @@
+
 const $ = id => document.getElementById(id);
 
 let archives = [];
@@ -139,10 +140,6 @@ async function loadMonth(archive) {
   $('games').innerHTML = 'جارٍ تحميل المباريات...';
 
   try {
-    // ------------------------------------------
-    // ONE MONTH
-    // ------------------------------------------
-
     if (archive !== '__all__') {
       const data = await api(
         `/api/games?archive=${encodeURIComponent(archive)}`
@@ -163,10 +160,6 @@ async function loadMonth(archive) {
 
       return;
     }
-
-    // ------------------------------------------
-    // ALL MONTHS
-    // ------------------------------------------
 
     const collected = [];
     const failedMonths = [];
@@ -196,15 +189,10 @@ async function loadMonth(archive) {
         failedMonths.push(monthName);
       }
 
-      // Small delay to avoid sending too many requests quickly.
       if (i < newestFirst.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 180));
       }
     }
-
-    // ------------------------------------------
-    // REMOVE DUPLICATES
-    // ------------------------------------------
 
     const unique = new Map();
 
@@ -218,10 +206,6 @@ async function loadMonth(archive) {
         unique.set(id, game);
       }
     }
-
-    // ------------------------------------------
-    // SORT NEWEST FIRST
-    // ------------------------------------------
 
     games = Array.from(unique.values()).sort(
       (a, b) => (b.end_time || 0) - (a.end_time || 0)
@@ -275,6 +259,7 @@ async function chooseGame(game, element) {
     `${new Date((game.end_time || 0) * 1000).toLocaleString('ar')} · ${game.time_class || 'Chess'} · ${game.white?.rating || '?'} / ${game.black?.rating || '?'}`;
 
   $('moveList').innerHTML = '';
+
   $('bar').style.width = '0%';
 
   $('blunders').textContent = '0';
@@ -300,13 +285,14 @@ async function chooseGame(game, element) {
     });
 
     cursor = 0;
-
     analysisResult = null;
 
     $('progressText').textContent =
       `تم تحميل ${parsed.moves.length} نقلة. اضغط ابدأ التحليل.`;
 
     renderBoard();
+
+    renderMoveReview();
 
     $('analyze').disabled = false;
 
@@ -390,97 +376,24 @@ function piecesFromFen(fen) {
 }
 
 // ============================================================
-// MOVE CLASSIFICATIONS
+// ARABIC MOVE EVALUATION
 // ============================================================
 
-const CLASS_META = {
-  brilliant: {
-    label: 'Brilliant',
-    symbol: '!!',
-    title: 'نقلة عبقرية'
-  },
-
-  great: {
-    label: 'Great',
-    symbol: '!',
-    title: 'نقلة عظيمة'
-  },
-
-  best: {
-    label: 'Best',
-    symbol: '★',
-    title: 'أفضل نقلة'
-  },
-
-  excellent: {
-    label: 'Excellent',
-    symbol: '✓',
-    title: 'ممتازة'
-  },
-
-  good: {
-    label: 'Good',
-    symbol: '✓',
-    title: 'جيدة'
-  },
-
-  book: {
-    label: 'Book',
-    symbol: '▤',
-    title: 'نقلة افتتاحية نظرية'
-  },
-
-  inaccuracy: {
-    label: 'Inaccuracy',
-    symbol: '?!',
-    title: 'غير دقيقة'
-  },
-
-  mistake: {
-    label: 'Mistake',
-    symbol: '?',
-    title: 'خطأ'
-  },
-
-  blunder: {
-    label: 'Blunder',
-    symbol: '??',
-    title: 'خطأ فادح'
-  },
-
-  miss: {
-    label: 'Miss',
-    symbol: '×',
-    title: 'تفويت فرصة'
-  }
+const MOVE_LABELS = {
+  brilliant: 'نقلة عبقرية',
+  great: 'نقلة عظيمة',
+  best: 'أفضل نقلة',
+  excellent: 'نقلة ممتازة',
+  good: 'نقلة جيدة',
+  book: 'نقلة افتتاحية',
+  inaccuracy: 'نقلة غير دقيقة',
+  mistake: 'خطأ',
+  blunder: 'خطأ فادح',
+  miss: 'تفويت فرصة'
 };
 
-function makeMoveMark(category) {
-  const meta = CLASS_META[category];
-
-  if (!meta) return null;
-
-  const mark = document.createElement('span');
-
-  mark.className = `move-mark ${category}`;
-
-  mark.title = `${meta.label} — ${meta.title}`;
-
-  mark.setAttribute('aria-label', meta.title);
-
-  if (category === 'excellent') {
-    mark.innerHTML =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.2 10.8h3.4v10H3.2zM8.4 10.8l4.1-7.2c.4-.7 1.5-.5 1.6.3l.3 3.6h4.1c1.6 0 2.5 1.6 1.9 3l-2.4 6.2c-.4 1-1.3 1.6-2.4 1.6H8.4z"/></svg>';
-
-  } else if (category === 'book') {
-    mark.innerHTML =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 4.5c3.4-.8 6.4-.3 9 1.4v14c-2.6-1.7-5.6-2.2-9-1.4zm18 0c-3.4-.8-6.4-.3-9 1.4v14c2.6-1.7 5.6-2.2 9-1.4z"/></svg>';
-
-  } else {
-    mark.textContent = meta.symbol;
-  }
-
-  return mark;
+function getMoveLabel(category) {
+  return MOVE_LABELS[category] || 'تم تقييم النقلة';
 }
 
 // ============================================================
@@ -496,12 +409,6 @@ function renderBoard() {
 
   $('board').innerHTML = '';
 
-  const reviewedMove = analysisResult?.moves?.find(
-    move => move.ply === cursor
-  );
-
-  const destination = reviewedMove?.uci?.slice(2, 4);
-
   for (let rank = 0; rank < 8; rank++) {
     for (let file = 0; file < 8; file++) {
       const piece = board[rank][file];
@@ -511,19 +418,8 @@ function renderBoard() {
       square.className =
         'sq ' + ((rank + file) % 2 ? 'dark' : 'light');
 
-      const algebraic =
-        'abcdefgh'[file] + String(8 - rank);
-
       if (piece) {
         square.append(makePiece(piece));
-      }
-
-      if (reviewedMove && destination === algebraic) {
-        const mark = makeMoveMark(reviewedMove.category);
-
-        if (mark) {
-          square.append(mark);
-        }
       }
 
       $('board').append(square);
@@ -541,6 +437,84 @@ function renderBoard() {
   $('next').disabled = cursor === ply;
 }
 
+// ============================================================
+// MOVE REVIEW — SHOW ONLY CURRENT MOVE
+// ============================================================
+
+function renderMoveReview() {
+  const container = $('moveList');
+
+  if (!container) return;
+
+  if (!analysisResult) {
+    container.innerHTML = `
+      <div class="muted">
+        ابدأ التحليل أولاً، ثم استخدم زر التالي لمراجعة كل نقلة.
+      </div>
+    `;
+    return;
+  }
+
+  if (cursor === 0) {
+    container.innerHTML = `
+      <div class="muted">
+        أنت في بداية المباراة. اضغط «التالي» لمراجعة أول نقلة وتقييمها.
+      </div>
+    `;
+    return;
+  }
+
+  const move = analysisResult.moves?.find(
+    item => Number(item.ply) === cursor
+  );
+
+  if (!move) {
+    container.innerHTML = `
+      <div class="muted">
+        لا يوجد تقييم متاح لهذه الوضعية.
+      </div>
+    `;
+    return;
+  }
+
+  const label = getMoveLabel(move.category);
+
+  const score = Number(move.loss || 0).toFixed(2);
+
+  const number = Math.floor((move.ply - 1) / 2) + 1;
+
+  const turn = move.ply % 2 ? 'الأبيض' : 'الأسود';
+
+  container.innerHTML = `
+    <div class="move-review">
+      <div class="muted">
+        النقلة ${number} · ${turn}
+      </div>
+
+      <h3 class="review-result">
+        ${escapeHTML(label)}
+      </h3>
+
+      <div class="review-details">
+        <p>
+          <strong>النقلة التي لعبتها:</strong>
+          ${escapeHTML(move.san)}
+        </p>
+
+        <p>
+          <strong>أفضل نقلة:</strong>
+          ${escapeHTML(move.best || 'غير متوفر')}
+        </p>
+
+        <p>
+          <strong>خسارة التقييم:</strong>
+          ${escapeHTML(score)}
+        </p>
+      </div>
+    </div>
+  `;
+}
+
 function stepCursor(delta) {
   if (!parsed?.moves?.length) return;
 
@@ -554,6 +528,8 @@ function stepCursor(delta) {
   cursor = next;
 
   renderBoard();
+
+  renderMoveReview();
 }
 
 $('prev').addEventListener('click', () => {
@@ -571,69 +547,16 @@ $('next').addEventListener('click', () => {
 function showAnalysis(result) {
   analysisResult = result;
 
-  $('moveList').innerHTML = '';
-
-  for (const move of result.moves) {
-    const row = document.createElement('div');
-
-    row.className = 'move';
-    row.tabIndex = 0;
-
-    row.setAttribute('role', 'button');
-
-    const number =
-      Math.floor((move.ply - 1) / 2) + 1;
-
-    const suffix =
-      move.ply % 2 ? '.' : '...';
-
-    const meta =
-      CLASS_META[move.category] || CLASS_META.good;
-
-    const score =
-      Number(move.loss || 0).toFixed(2);
-
-    row.innerHTML = `
-      <span class="muted">${number}${suffix}</span>
-      <b>${escapeHTML(move.san)}</b>
-      <span>
-        <span class="move-class ${escapeHTML(move.category)}">
-          <span class="symbol">${escapeHTML(meta.symbol)}</span>
-          ${escapeHTML(meta.label)}
-        </span>
-        <small>(${score})</small>
-        <br>
-        <small class="muted">
-          الأفضل: ${escapeHTML(move.best)}
-        </small>
-      </span>
-    `;
-
-    const selectMove = () => {
-      cursor = move.ply;
-      renderBoard();
-    };
-
-    row.addEventListener('click', selectMove);
-
-    row.addEventListener('keydown', event => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectMove();
-      }
-    });
-
-    $('moveList').append(row);
-  }
-
   renderBoard();
+
+  renderMoveReview();
 
   $('blunders').textContent = result.blunders;
   $('mistakes').textContent = result.mistakes;
   $('accuracy').textContent = result.accuracy + '%';
 
   $('progressText').textContent =
-    `اكتمل التحليل: ${result.move_count} نقلة · Stockfish · عمق ${result.depth}. اضغط على أي نقلة للانتقال إلى وضعيتها.`;
+    `اكتمل التحليل: ${result.move_count} نقلة · Stockfish · عمق ${result.depth}. استخدم التالي لمراجعة تقييم كل نقلة.`;
 }
 
 // ============================================================
@@ -652,6 +575,8 @@ $('analyze').onclick = async () => {
   analysisResult = null;
 
   renderBoard();
+
+  renderMoveReview();
 
   $('bar').style.width = '0%';
 
