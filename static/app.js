@@ -1,4 +1,3 @@
-
 const $ = id => document.getElementById(id);
 
 let archives = [];
@@ -19,6 +18,10 @@ const escapeHTML = value =>
     '"': '&quot;',
     "'": '&#39;'
   }[c]));
+
+// ============================================================
+// API
+// ============================================================
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
@@ -291,7 +294,6 @@ async function chooseGame(game, element) {
       `تم تحميل ${parsed.moves.length} نقلة. اضغط ابدأ التحليل.`;
 
     renderBoard();
-
     renderMoveReview();
 
     $('analyze').disabled = false;
@@ -376,8 +378,72 @@ function piecesFromFen(fen) {
 }
 
 // ============================================================
-// ARABIC MOVE EVALUATION
+// MOVE CLASSIFICATION — STICKER OVERLAY
 // ============================================================
+
+// ملصقات التصنيف. تظهر فوق مربع وصول النقلة ولا تغيّر أبعاد الرقعة.
+const MOVE_STICKERS = {
+  brilliant: {
+    symbol: '!!',
+    label: 'نقلة عبقرية',
+    background: '#16a6a1',
+    color: '#ffffff'
+  },
+  great: {
+    symbol: '!',
+    label: 'نقلة عظيمة',
+    background: '#249b63',
+    color: '#ffffff'
+  },
+  best: {
+    symbol: '★',
+    label: 'أفضل نقلة',
+    background: '#249b63',
+    color: '#ffffff'
+  },
+  excellent: {
+    symbol: '!',
+    label: 'نقلة ممتازة',
+    background: '#6a9f45',
+    color: '#ffffff'
+  },
+  good: {
+    symbol: '✓',
+    label: 'نقلة جيدة',
+    background: '#8a9b45',
+    color: '#ffffff'
+  },
+  book: {
+    symbol: '📖',
+    label: 'نقلة افتتاحية',
+    background: '#6b8eae',
+    color: '#ffffff'
+  },
+  inaccuracy: {
+    symbol: '?!',
+    label: 'نقلة غير دقيقة',
+    background: '#e0b323',
+    color: '#202020'
+  },
+  mistake: {
+    symbol: '?',
+    label: 'خطأ',
+    background: '#e58b32',
+    color: '#ffffff'
+  },
+  blunder: {
+    symbol: '??',
+    label: 'خطأ فادح',
+    background: '#d94b4b',
+    color: '#ffffff'
+  },
+  miss: {
+    symbol: '✕',
+    label: 'تفويت فرصة',
+    background: '#bd6c92',
+    color: '#ffffff'
+  }
+};
 
 const MOVE_LABELS = {
   brilliant: 'نقلة عبقرية',
@@ -396,6 +462,74 @@ function getMoveLabel(category) {
   return MOVE_LABELS[category] || 'تم تقييم النقلة';
 }
 
+function getMoveSticker(category) {
+  if (!category) return null;
+
+  const normalized = String(category).toLowerCase().trim();
+
+  return MOVE_STICKERS[normalized] || null;
+}
+
+// يدعم UCI مثل e2e4 أو e7e8q، ويقبل أيضًا وجود شرطة بين المربعين.
+function getUciDestination(uci) {
+  if (typeof uci !== 'string') return null;
+
+  const match = uci.trim().match(
+    /^[a-h][1-8][a-h][1-8][qrbn]?$/i
+  );
+
+  if (!match) return null;
+
+  return match[0].slice(2, 4).toLowerCase();
+}
+
+function createMoveSticker(category) {
+  const stickerData = getMoveSticker(category);
+
+  if (!stickerData) return null;
+
+  const sticker = document.createElement('span');
+
+  sticker.className = 'move-sticker';
+  sticker.textContent = stickerData.symbol;
+  sticker.title = stickerData.label;
+  sticker.setAttribute('aria-label', stickerData.label);
+
+  // تموضع مطلق: لا يضيف مساحة ولا يغيّر حجم أي مربع.
+  sticker.style.cssText = `
+    position: absolute;
+    z-index: 5;
+    top: 2px;
+    right: 2px;
+    width: clamp(17px, 2.6vw, 25px);
+    height: clamp(17px, 2.6vw, 25px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: ${stickerData.background};
+    color: ${stickerData.color};
+    font-family: Arial, sans-serif;
+    font-size: clamp(10px, 1.7vw, 14px);
+    font-weight: 800;
+    line-height: 1;
+    box-shadow: 0 1px 3px #0005;
+    pointer-events: none;
+    user-select: none;
+  `;
+
+  return sticker;
+}
+
+function getCurrentMove() {
+  if (!analysisResult?.moves || cursor < 1) return null;
+
+  return analysisResult.moves.find(
+    item => Number(item.ply) === cursor
+  ) || null;
+}
+
 // ============================================================
 // CHESS BOARD
 // ============================================================
@@ -409,6 +543,10 @@ function renderBoard() {
 
   $('board').innerHTML = '';
 
+  // النقلة التي انتهت عند الوضعية الحالية.
+  const currentMove = getCurrentMove();
+  const destination = getUciDestination(currentMove?.uci);
+
   for (let rank = 0; rank < 8; rank++) {
     for (let file = 0; file < 8; file++) {
       const piece = board[rank][file];
@@ -418,8 +556,28 @@ function renderBoard() {
       square.className =
         'sq ' + ((rank + file) % 2 ? 'dark' : 'light');
 
+      // ضروري لتموضع الملصق داخل المربع دون التأثير على الشبكة.
+      square.style.position = 'relative';
+
       if (piece) {
         square.append(makePiece(piece));
+      }
+
+      const squareName =
+        'abcdefgh'[file] + String(8 - rank);
+
+      if (
+        destination &&
+        squareName === destination &&
+        currentMove
+      ) {
+        const sticker = createMoveSticker(
+          currentMove.category
+        );
+
+        if (sticker) {
+          square.append(sticker);
+        }
       }
 
       $('board').append(square);
@@ -478,11 +636,8 @@ function renderMoveReview() {
   }
 
   const label = getMoveLabel(move.category);
-
   const score = Number(move.loss || 0).toFixed(2);
-
   const number = Math.floor((move.ply - 1) / 2) + 1;
-
   const turn = move.ply % 2 ? 'الأبيض' : 'الأسود';
 
   container.innerHTML = `
@@ -515,6 +670,10 @@ function renderMoveReview() {
   `;
 }
 
+// ============================================================
+// MOVE NAVIGATION
+// ============================================================
+
 function stepCursor(delta) {
   if (!parsed?.moves?.length) return;
 
@@ -528,7 +687,6 @@ function stepCursor(delta) {
   cursor = next;
 
   renderBoard();
-
   renderMoveReview();
 }
 
@@ -548,7 +706,6 @@ function showAnalysis(result) {
   analysisResult = result;
 
   renderBoard();
-
   renderMoveReview();
 
   $('blunders').textContent = result.blunders;
@@ -575,7 +732,6 @@ $('analyze').onclick = async () => {
   analysisResult = null;
 
   renderBoard();
-
   renderMoveReview();
 
   $('bar').style.width = '0%';
