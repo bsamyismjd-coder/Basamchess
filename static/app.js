@@ -1,17 +1,23 @@
-
 const $ = id => document.getElementById(id);
 
-let archives = [], games = [], selected = null, parsed = null, cursor = 0, activeJob = null, analysisResult = null;
+let archives = [];
+let games = [];
+let selected = null;
+let parsed = null;
+let cursor = 0;
+let activeJob = null;
+let analysisResult = null;
 
 const setStatus = message => $('status').textContent = message;
 
-const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({
-  '&':'&amp;',
-  '<':'&lt;',
-  '>':'&gt;',
-  '"':'&quot;',
-  "'":'&#39;'
-}[c]));
+const escapeHTML = value =>
+  String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
@@ -23,6 +29,10 @@ async function api(url, options = {}) {
 
   return data;
 }
+
+// ============================================================
+// PLAYER SEARCH — ALL COMPLETED GAMES
+// ============================================================
 
 $('load').onclick = async () => {
   const username = $('username').value.trim();
@@ -39,23 +49,34 @@ $('load').onclick = async () => {
   setStatus('جارٍ جلب أرشيف اللاعب من Chess.com...');
 
   try {
-    const data = await api(`/api/player/${encodeURIComponent(username)}/archives`);
+    const data = await api(
+      `/api/player/${encodeURIComponent(username)}/archives`
+    );
 
     archives = data.archives || [];
 
     if (!archives.length) {
-      throw new Error('لم يتم العثور على أرشيف مباريات عام لهذا اللاعب.');
+      throw new Error(
+        'لم يتم العثور على أرشيف مباريات عام لهذا اللاعب.'
+      );
     }
 
-    $('month').innerHTML = archives.map(url =>
-      `<option value="${escapeHTML(url)}">${escapeHTML(url.split('/').slice(-2).join('/'))}</option>`
-    ).join('');
+    const newestFirst = archives.slice().reverse();
 
+    $('month').innerHTML = [
+      '<option value="__all__">كل الأشهر — جميع المباريات المكتملة</option>',
+      ...newestFirst.map(url => {
+        const month = url.split('/').slice(-2).join('/');
+
+        return `<option value="${escapeHTML(url)}">${escapeHTML(month)}</option>`;
+      })
+    ].join('');
+
+    $('month').value = '__all__';
     $('month').disabled = false;
 
-    await loadMonth(archives[0]);
+    await loadMonth('__all__');
 
-    setStatus(`تم العثور على ${archives.length} أشهر حديثة. اختر مباراة من القائمة.`);
   } catch (error) {
     setStatus(error.message);
   } finally {
@@ -63,56 +84,173 @@ $('load').onclick = async () => {
   }
 };
 
-$('month').onchange = () => loadMonth($('month').value);
+$('month').onchange = () => {
+  loadMonth($('month').value);
+};
+
+// ============================================================
+// LOAD MONTH OR ALL ARCHIVES
+// ============================================================
+
+function renderGames(list) {
+  $('games').innerHTML = '';
+
+  if (!list.length) {
+    $('games').textContent =
+      'لا توجد مباريات مكتملة في الفترة المحددة.';
+    return;
+  }
+
+  for (const game of list) {
+    const white = game.white?.username || 'White';
+    const black = game.black?.username || 'Black';
+
+    const date = game.end_time
+      ? new Date(game.end_time * 1000).toLocaleDateString('ar')
+      : '';
+
+    const button = document.createElement('button');
+
+    button.className = 'game secondary';
+
+    button.innerHTML = `
+      <span>
+        <b>${escapeHTML(white)}</b> ×
+        <b>${escapeHTML(black)}</b>
+        <br>
+        <small class="muted">
+          ${escapeHTML(date)} ·
+          ${escapeHTML(game.time_class || '')}
+        </small>
+      </span>
+      <span class="tag">
+        ${escapeHTML(game.white?.result || '—')} /
+        ${escapeHTML(game.black?.result || '—')}
+      </span>
+    `;
+
+    button.onclick = () => chooseGame(game, button);
+
+    $('games').append(button);
+  }
+}
 
 async function loadMonth(archive) {
   $('games').innerHTML = 'جارٍ تحميل المباريات...';
 
   try {
-    const data = await api(`/api/games?archive=${encodeURIComponent(archive)}`);
+    // ------------------------------------------
+    // ONE MONTH
+    // ------------------------------------------
 
-    games = (data.games || []).slice().reverse();
-    $('games').innerHTML = '';
+    if (archive !== '__all__') {
+      const data = await api(
+        `/api/games?archive=${encodeURIComponent(archive)}`
+      );
 
-    if (!games.length) {
-      $('games').textContent = 'لا توجد مباريات في هذا الشهر.';
+      games = (data.games || []).slice().sort(
+        (a, b) => (b.end_time || 0) - (a.end_time || 0)
+      );
+
+      renderGames(games);
+
+      setStatus(
+        `تم تحميل ${games.length} مباراة من أرشيف ${archive
+          .split('/')
+          .slice(-2)
+          .join('/')}.`
+      );
+
       return;
     }
 
-    for (const game of games) {
-      const white = game.white?.username || 'White';
-      const black = game.black?.username || 'Black';
+    // ------------------------------------------
+    // ALL MONTHS
+    // ------------------------------------------
 
-      const date = game.end_time
-        ? new Date(game.end_time * 1000).toLocaleDateString('ar')
-        : '';
+    const collected = [];
+    const failedMonths = [];
 
-      const button = document.createElement('button');
+    const newestFirst = archives.slice().reverse();
 
-      button.className = 'game secondary';
+    for (let i = 0; i < newestFirst.length; i++) {
+      const url = newestFirst[i];
 
-      button.innerHTML = `
-        <span>
-          <b>${escapeHTML(white)}</b> × <b>${escapeHTML(black)}</b>
-          <br>
-          <small class="muted">
-            ${escapeHTML(date)} · ${escapeHTML(game.time_class || '')}
-          </small>
-        </span>
-        <span class="tag">
-          ${escapeHTML(game.white?.result || '—')} /
-          ${escapeHTML(game.black?.result || '—')}
-        </span>
-      `;
+      const monthName = url
+        .split('/')
+        .slice(-2)
+        .join('/');
 
-      button.onclick = () => chooseGame(game, button);
+      setStatus(
+        `جارٍ جمع المباريات المكتملة: ${i + 1} من ${newestFirst.length} أشهر (${monthName})...`
+      );
 
-      $('games').append(button);
+      try {
+        const data = await api(
+          `/api/games?archive=${encodeURIComponent(url)}`
+        );
+
+        collected.push(...(data.games || []));
+
+      } catch (error) {
+        failedMonths.push(monthName);
+      }
+
+      // Small delay to avoid sending too many requests quickly.
+      if (i < newestFirst.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 180));
+      }
     }
+
+    // ------------------------------------------
+    // REMOVE DUPLICATES
+    // ------------------------------------------
+
+    const unique = new Map();
+
+    for (const game of collected) {
+      const id =
+        game.uuid ||
+        game.url ||
+        `${game.end_time || 0}:${game.white?.username || ''}:${game.black?.username || ''}`;
+
+      if (!unique.has(id)) {
+        unique.set(id, game);
+      }
+    }
+
+    // ------------------------------------------
+    // SORT NEWEST FIRST
+    // ------------------------------------------
+
+    games = Array.from(unique.values()).sort(
+      (a, b) => (b.end_time || 0) - (a.end_time || 0)
+    );
+
+    renderGames(games);
+
+    if (failedMonths.length) {
+      setStatus(
+        `تم تحميل ${games.length} مباراة، لكن تعذر تحميل ${failedMonths.length} شهر/أشهر: ${failedMonths.join('، ')}. اختر الشهر لإعادة المحاولة.`
+      );
+    } else {
+      setStatus(
+        `تم تحميل ${games.length} مباراة مكتملة من جميع الأشهر المتاحة (${archives.length} شهر).`
+      );
+    }
+
   } catch (error) {
     $('games').textContent = error.message;
+
+    setStatus(
+      'تعذر تحميل المباريات: ' + error.message
+    );
   }
 }
+
+// ============================================================
+// SELECT GAME
+// ============================================================
 
 async function chooseGame(game, element) {
   document.querySelectorAll('.game').forEach(button => {
@@ -138,23 +276,32 @@ async function chooseGame(game, element) {
 
   $('moveList').innerHTML = '';
   $('bar').style.width = '0%';
+
   $('blunders').textContent = '0';
   $('mistakes').textContent = '0';
   $('accuracy').textContent = '—';
 
-  $('progressText').textContent = 'جارٍ تجهيز المباراة...';
-  $('analyze').disabled = true;
+  $('progressText').textContent =
+    'جارٍ تجهيز المباراة...';
 
-  analysisResult = null;
+  $('analyze').disabled = true;
 
   try {
     parsed = await api('/api/parse', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({pgn: game.pgn})
+
+      headers: {
+        'Content-Type': 'application/json'
+      },
+
+      body: JSON.stringify({
+        pgn: game.pgn
+      })
     });
 
     cursor = 0;
+
+    analysisResult = null;
 
     $('progressText').textContent =
       `تم تحميل ${parsed.moves.length} نقلة. اضغط ابدأ التحليل.`;
@@ -162,22 +309,27 @@ async function chooseGame(game, element) {
     renderBoard();
 
     $('analyze').disabled = false;
+
   } catch (error) {
     $('progressText').textContent = error.message;
     parsed = null;
   }
 }
 
+// ============================================================
+// NEO PIECES
+// ============================================================
+
 const PIECE_CDN =
   'https://images.chesscomfiles.com/chess-themes/pieces/neo/150/';
 
 const pieceFallback = {
-  k:'♚',
-  q:'♛',
-  r:'♜',
-  b:'♝',
-  n:'♞',
-  p:'♟'
+  k: '♚',
+  q: '♛',
+  r: '♜',
+  b: '♝',
+  n: '♞',
+  p: '♟'
 };
 
 function makePiece(piece) {
@@ -190,12 +342,14 @@ function makePiece(piece) {
   image.draggable = false;
   image.loading = 'eager';
   image.decoding = 'async';
+
   image.src = PIECE_CDN + key + '.png';
 
   image.onerror = () => {
     const span = document.createElement('span');
 
-    span.textContent = pieceFallback[piece.type] || '●';
+    span.textContent =
+      pieceFallback[piece.type] || '●';
 
     span.style.cssText =
       'font-family:serif;font-size:clamp(27px,7vw,52px);line-height:1;color:' +
@@ -210,6 +364,7 @@ function makePiece(piece) {
 
 function piecesFromFen(fen) {
   const rows = fen.split(' ')[0].split('/');
+
   const board = [];
 
   for (const row of rows) {
@@ -234,56 +389,69 @@ function piecesFromFen(fen) {
   return board;
 }
 
+// ============================================================
+// MOVE CLASSIFICATIONS
+// ============================================================
+
 const CLASS_META = {
   brilliant: {
-    label:'Brilliant',
-    symbol:'!!',
-    title:'نقلة عبقرية'
+    label: 'Brilliant',
+    symbol: '!!',
+    title: 'نقلة عبقرية'
   },
+
   great: {
-    label:'Great',
-    symbol:'!',
-    title:'نقلة عظيمة'
+    label: 'Great',
+    symbol: '!',
+    title: 'نقلة عظيمة'
   },
+
   best: {
-    label:'Best',
-    symbol:'★',
-    title:'أفضل نقلة'
+    label: 'Best',
+    symbol: '★',
+    title: 'أفضل نقلة'
   },
+
   excellent: {
-    label:'Excellent',
-    symbol:'✓',
-    title:'ممتازة'
+    label: 'Excellent',
+    symbol: '✓',
+    title: 'ممتازة'
   },
+
   good: {
-    label:'Good',
-    symbol:'✓',
-    title:'جيدة'
+    label: 'Good',
+    symbol: '✓',
+    title: 'جيدة'
   },
+
   book: {
-    label:'Book',
-    symbol:'▤',
-    title:'نقلة افتتاحية نظرية'
+    label: 'Book',
+    symbol: '▤',
+    title: 'نقلة افتتاحية نظرية'
   },
+
   inaccuracy: {
-    label:'Inaccuracy',
-    symbol:'?!',
-    title:'غير دقيقة'
+    label: 'Inaccuracy',
+    symbol: '?!',
+    title: 'غير دقيقة'
   },
+
   mistake: {
-    label:'Mistake',
-    symbol:'?',
-    title:'خطأ'
+    label: 'Mistake',
+    symbol: '?',
+    title: 'خطأ'
   },
+
   blunder: {
-    label:'Blunder',
-    symbol:'??',
-    title:'خطأ فادح'
+    label: 'Blunder',
+    symbol: '??',
+    title: 'خطأ فادح'
   },
+
   miss: {
-    label:'Miss',
-    symbol:'×',
-    title:'تفويت فرصة'
+    label: 'Miss',
+    symbol: '×',
+    title: 'تفويت فرصة'
   }
 };
 
@@ -295,7 +463,9 @@ function makeMoveMark(category) {
   const mark = document.createElement('span');
 
   mark.className = `move-mark ${category}`;
+
   mark.title = `${meta.label} — ${meta.title}`;
+
   mark.setAttribute('aria-label', meta.title);
 
   if (category === 'excellent') {
@@ -313,13 +483,24 @@ function makeMoveMark(category) {
   return mark;
 }
 
-/* عرض الرقعة بدون علامات التقييم فوق القطع */
+// ============================================================
+// CHESS BOARD
+// ============================================================
+
 function renderBoard() {
   if (!parsed?.positions?.length) return;
 
-  const board = piecesFromFen(parsed.positions[cursor]);
+  const board = piecesFromFen(
+    parsed.positions[cursor]
+  );
 
   $('board').innerHTML = '';
+
+  const reviewedMove = analysisResult?.moves?.find(
+    move => move.ply === cursor
+  );
+
+  const destination = reviewedMove?.uci?.slice(2, 4);
 
   for (let rank = 0; rank < 8; rank++) {
     for (let file = 0; file < 8; file++) {
@@ -330,8 +511,19 @@ function renderBoard() {
       square.className =
         'sq ' + ((rank + file) % 2 ? 'dark' : 'light');
 
+      const algebraic =
+        'abcdefgh'[file] + String(8 - rank);
+
       if (piece) {
         square.append(makePiece(piece));
+      }
+
+      if (reviewedMove && destination === algebraic) {
+        const mark = makeMoveMark(reviewedMove.category);
+
+        if (mark) {
+          square.append(mark);
+        }
       }
 
       $('board').append(square);
@@ -364,8 +556,17 @@ function stepCursor(delta) {
   renderBoard();
 }
 
-$('prev').addEventListener('click', () => stepCursor(-1));
-$('next').addEventListener('click', () => stepCursor(1));
+$('prev').addEventListener('click', () => {
+  stepCursor(-1);
+});
+
+$('next').addEventListener('click', () => {
+  stepCursor(1);
+});
+
+// ============================================================
+// SHOW ANALYSIS
+// ============================================================
 
 function showAnalysis(result) {
   analysisResult = result;
@@ -377,14 +578,20 @@ function showAnalysis(result) {
 
     row.className = 'move';
     row.tabIndex = 0;
+
     row.setAttribute('role', 'button');
 
-    const number = Math.floor((move.ply - 1) / 2) + 1;
-    const suffix = move.ply % 2 ? '.' : '...';
+    const number =
+      Math.floor((move.ply - 1) / 2) + 1;
 
-    const meta = CLASS_META[move.category] || CLASS_META.good;
+    const suffix =
+      move.ply % 2 ? '.' : '...';
 
-    const score = Number(move.loss || 0).toFixed(2);
+    const meta =
+      CLASS_META[move.category] || CLASS_META.good;
+
+    const score =
+      Number(move.loss || 0).toFixed(2);
 
     row.innerHTML = `
       <span class="muted">${number}${suffix}</span>
@@ -429,10 +636,17 @@ function showAnalysis(result) {
     `اكتمل التحليل: ${result.move_count} نقلة · Stockfish · عمق ${result.depth}. اضغط على أي نقلة للانتقال إلى وضعيتها.`;
 }
 
+// ============================================================
+// STOCKFISH ANALYSIS
+// ============================================================
+
 $('analyze').onclick = async () => {
-  if (!selected?.pgn || !parsed?.moves?.length) return;
+  if (!selected?.pgn || !parsed?.moves?.length) {
+    return;
+  }
 
   $('analyze').disabled = true;
+
   $('moveList').innerHTML = '';
 
   analysisResult = null;
@@ -447,7 +661,11 @@ $('analyze').onclick = async () => {
   try {
     const started = await api('/api/analyze', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+
+      headers: {
+        'Content-Type': 'application/json'
+      },
+
       body: JSON.stringify({
         pgn: selected.pgn,
         depth: 10,
@@ -458,12 +676,19 @@ $('analyze').onclick = async () => {
     activeJob = started.job_id;
 
     while (true) {
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      await new Promise(resolve =>
+        setTimeout(resolve, 1200)
+      );
 
-      const job = await api(`/api/jobs/${activeJob}`);
+      const job = await api(
+        `/api/jobs/${activeJob}`
+      );
 
-      const total = job.total || parsed.moves.length;
-      const progress = job.progress || 0;
+      const total =
+        job.total || parsed.moves.length;
+
+      const progress =
+        job.progress || 0;
 
       $('bar').style.width =
         (total ? progress / total * 100 : 0) + '%';
@@ -477,7 +702,9 @@ $('analyze').onclick = async () => {
       }
 
       if (job.status === 'failed') {
-        throw new Error(job.error || 'فشل التحليل.');
+        throw new Error(
+          job.error || 'فشل التحليل.'
+        );
       }
     }
 
