@@ -1,0 +1,14 @@
+طريقة نشر BASAM على Render (مرة واحدة):
+
+1) افتح GitHub وأنشئ مستودعًا جديدًا باسم basam-chess-review.
+2) ارفع كل محتويات هذا المجلد إلى جذر المستودع، وليس ملف ZIP نفسه.
+3) افتح Render ثم New + ثم Web Service.
+4) اربط حساب GitHub واختر المستودع basam-chess-review.
+5) اختر Runtime: Docker، والخطة Free.
+6) اترك Dockerfile path = ./Dockerfile وDocker context = .
+7) اضغط Deploy.
+8) بعد نجاح النشر افتح رابط الخدمة ثم أضف /health في نهايته.
+   المطلوب أن تظهر JSON فيها: "status":"ok" و"engine_found":true.
+9) افتح الرابط الرئيسي، أدخل اسم مستخدم Chess.com، اختر الشهر ثم المباراة واضغط ابدأ التحليل.
+
+مهم: لا ترفع ZIP إلى خانة Static Site. يجب إنشاء Web Service لأن Python وStockfish يعملان على الخادم.
