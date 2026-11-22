@@ -1,4 +1,3 @@
-
 # ============================================================
 # BASAM v11 — Chess Review & Stockfish Analysis
 # ============================================================
@@ -18,7 +17,7 @@ import chess.engine
 from flask import Flask, request, jsonify
 from concurrent.futures import ThreadPoolExecutor
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 logging.basicConfig(level=logging.INFO)
 
 # ---------------- CONFIG ----------------
@@ -50,11 +49,7 @@ CHESS_HEADERS = {
 
 @app.route("/")
 def home():
-    return jsonify({
-        "name": "BASAM Chess Review",
-        "version": "11.0",
-        "status": "online"
-    })
+    return app.send_static_file("index.html")
 
 
 @app.route("/health")
@@ -265,8 +260,6 @@ def score_to_cp(score):
 def classify_move(loss_cp, is_best):
     """
     BASAM classification thresholds.
-
-    loss_cp is measured in centipawns.
     """
 
     if loss_cp <= 10:
@@ -321,7 +314,7 @@ def classify_move(loss_cp, is_best):
 def calculate_accuracy(losses):
     """
     BASAM accuracy estimate.
-    This is not Chess.com's official accuracy formula.
+    Not the official Chess.com formula.
     """
 
     if not losses:
@@ -330,7 +323,6 @@ def calculate_accuracy(losses):
     total = sum(min(max(x, 0), 1000) for x in losses)
     average = total / len(losses)
 
-    # Smooth penalty curve.
     accuracy = 100 * (2.718281828 ** (-average / 350))
 
     return round(max(0, min(100, accuracy)), 1)
@@ -339,27 +331,20 @@ def calculate_accuracy(losses):
 # ---------------- SINGLE MOVE ANALYSIS ----------------
 
 def analyze_one_move(engine, board, played_move, depth, seconds):
-    """
-    Compare:
-      1. Best engine move from the current position.
-      2. The move actually played from that same position.
-
-    Both evaluations use the side-to-move perspective.
-    """
-
     mover = board.turn
+
     limit = chess.engine.Limit(
         depth=depth,
         time=seconds
     )
 
-    # First: unrestricted best move.
     best_info = engine.analyse(
         board,
         limit
     )
 
     best_score_obj = best_info.get("score")
+
     best_score = score_to_cp(
         best_score_obj.pov(mover)
         if best_score_obj else None
@@ -374,7 +359,6 @@ def analyze_one_move(engine, board, played_move, depth, seconds):
         else "—"
     )
 
-    # Second: force Stockfish to evaluate the played move.
     played_info = engine.analyse(
         board,
         limit,
@@ -382,12 +366,12 @@ def analyze_one_move(engine, board, played_move, depth, seconds):
     )
 
     played_score_obj = played_info.get("score")
+
     played_score = score_to_cp(
         played_score_obj.pov(mover)
         if played_score_obj else None
     )
 
-    # Difference between the best choice and the played move.
     loss_cp = max(0, best_score - played_score)
 
     is_best = (
@@ -506,7 +490,6 @@ def run_analysis(job_id, pgn_text, depth, seconds):
 
                 board.push(played_move)
 
-                # Update progress.
                 with jobs_lock:
                     if job_id in jobs:
                         jobs[job_id]["progress"] = round(
@@ -517,7 +500,6 @@ def run_analysis(job_id, pgn_text, depth, seconds):
                         jobs[job_id]["current_move"] = index + 1
                         jobs[job_id]["move_count"] = len(parsed_moves)
 
-                        # Make completed moves available immediately.
                         jobs[job_id]["partial_moves"] = results.copy()
 
         accuracy = calculate_accuracy(losses)
@@ -590,7 +572,6 @@ def analyze():
         depth = max(8, min(depth, MAX_DEPTH))
         seconds = max(0.1, min(seconds, MAX_SECONDS))
 
-        # Validate PGN before creating the job.
         game, parsed_moves, _ = parse_pgn_text(pgn_text)
 
         if not parsed_moves:
