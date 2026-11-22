@@ -1,321 +1,691 @@
-import io
+
+# ============================================================
+# BASAM v11 — Chess Review & Stockfish Analysis
+# ============================================================
+
 import os
-import re
-import shutil
-import threading
+import io
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import urlparse
-
-import chess
-import chess.engine
-import chess.pgn
+import time
+import shutil
+import logging
+import threading
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+import chess
+import chess.pgn
+import chess.engine
 
-app = Flask(__name__, static_folder='static')
-app.config['MAX_CONTENT_LENGTH'] = 300 * 1024  # PGN requests are intentionally small.
+from flask import Flask, request, jsonify
+from concurrent.futures import ThreadPoolExecutor
 
-CHESSCOM = 'https://api.chess.com/pub'
-HEADERS = {
-    'User-Agent': 'BASAM-Chess-Review/1.0 (personal chess analysis tool)',
-    'Accept': 'application/json, application/x-chess-pgn, text/plain, */*',
-}
-ENGINE_PATH = os.environ.get('STOCKFISH_PATH') or shutil.which('stockfish') or '/usr/games/stockfish'
-POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix='stockfish-analysis')
-JOBS = {}
-JOBS_LOCK = threading.Lock()
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# ---------------- CONFIG ----------------
+
 MAX_PLIES = 200
+MAX_WORKERS = 1
 
+DEFAULT_DEPTH = 14
+DEFAULT_SECONDS = 0.35
 
-def chesscom_get(url, accept='application/json'):
-    headers = dict(HEADERS)
-    headers['Accept'] = accept
-    try:
-        response = requests.get(url, headers=headers, timeout=(8, 25))
-    except requests.RequestException as exc:
-        raise RuntimeError(f'تعذر الاتصال بـ Chess.com: {exc}') from exc
-    if response.status_code == 404:
-        raise RuntimeError('لم يتم العثور على البيانات المطلوبة في Chess.com.')
-    if response.status_code == 429:
-        raise RuntimeError('Chess.com طلب الانتظار قليلًا بسبب كثرة الطلبات. جرّب بعد دقيقة.')
-    if not response.ok:
-        raise RuntimeError(f'Chess.com أعاد الحالة {response.status_code}.')
-    return response
+MAX_DEPTH = 18
+MAX_SECONDS = 1.0
 
+STOCKFISH_PATH = (
+    os.environ.get("STOCKFISH_PATH")
+    or shutil.which("stockfish")
+    or "/usr/games/stockfish"
+)
 
-@app.get('/')
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+jobs = {}
+jobs_lock = threading.Lock()
+
+CHESS_HEADERS = {
+    "User-Agent": "BASAM-Chess-Review/11.0"
+}
+
+# ---------------- BASIC ROUTES ----------------
+
+@app.route("/")
 def home():
-    return send_from_directory('static', 'index.html')
-
-
-@app.get('/health')
-def health():
-    engine_exists = os.path.isfile(ENGINE_PATH) and os.access(ENGINE_PATH, os.X_OK)
     return jsonify({
-        'status': 'ok',
-        'engine_found': engine_exists,
-        'engine_path': ENGINE_PATH if engine_exists else None,
-    }), (200 if engine_exists else 503)
+        "name": "BASAM Chess Review",
+        "version": "11.0",
+        "status": "online"
+    })
 
 
-@app.get('/api/player/<username>/archives')
+@app.route("/health")
+def health():
+    engine_exists = (
+        os.path.isfile(STOCKFISH_PATH)
+        or shutil.which(STOCKFISH_PATH) is not None
+    )
+
+    return jsonify({
+        "status": "ok",
+        "version": "11.0",
+        "engine": "Stockfish",
+        "engine_path": STOCKFISH_PATH,
+        "engine_available": engine_exists
+    })
+
+
+# ---------------- CHESS.COM API ----------------
+
+def chesscom_get(url):
+    response = requests.get(
+        url,
+        headers=CHESS_HEADERS,
+        timeout=25
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+@app.route("/api/player/<username>/archives")
 def player_archives(username):
-    if not re.fullmatch(r'[A-Za-z0-9_-]{2,25}', username):
-        return jsonify(error='اسم المستخدم غير صالح.'), 400
+    username = username.strip()
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+
     try:
-        response = chesscom_get(f'{CHESSCOM}/player/{username}/games/archives')
-        data = response.json()
-        archives = (data.get('archives') or [])[-12:][::-1]
-        return jsonify(archives=archives)
-    except (RuntimeError, ValueError) as exc:
-        return jsonify(error=str(exc)), 502
+        data = chesscom_get(
+            f"https://api.chess.com/pub/player/{username}/games/archives"
+        )
+
+        return jsonify({
+            "username": username,
+            "archives": data.get("archives", [])
+        })
+
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response else 502
+
+        return jsonify({
+            "error": "Unable to retrieve player archives",
+            "details": str(e)
+        }), status
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-@app.get('/api/games')
-def games_for_archive():
-    archive = request.args.get('archive', '')
-    parsed = urlparse(archive)
-    if (parsed.scheme != 'https' or parsed.netloc != 'api.chess.com'
-            or not re.fullmatch(r'/pub/player/[A-Za-z0-9_-]{2,25}/games/\d{4}/\d{2}', parsed.path)):
-        return jsonify(error='رابط أرشيف المباريات غير صالح.'), 400
+@app.route("/api/games", methods=["GET", "POST"])
+def get_games():
+    data = request.get_json(silent=True) or {}
+
+    archive_url = (
+        request.args.get("url")
+        or request.args.get("archive")
+        or data.get("url")
+        or data.get("archive")
+        or data.get("archive_url")
+    )
+
+    if not archive_url:
+        return jsonify({
+            "error": "Archive URL is required"
+        }), 400
+
+    if not archive_url.startswith(
+        "https://api.chess.com/pub/player/"
+    ):
+        return jsonify({
+            "error": "Invalid Chess.com archive URL"
+        }), 400
+
     try:
-        response = chesscom_get(archive)
-        data = response.json()
-        return jsonify(games=(data.get('games') or [])[-300:])
-    except (RuntimeError, ValueError) as exc:
-        return jsonify(error=str(exc)), 502
+        result = chesscom_get(archive_url)
+
+        return jsonify({
+            "games": result.get("games", [])
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": "Unable to retrieve games",
+            "details": str(e)
+        }), 502
 
 
-def update_job(job_id, **values):
-    with JOBS_LOCK:
-        if job_id in JOBS:
-            JOBS[job_id].update(values)
+# ---------------- PGN PARSING ----------------
+
+def parse_pgn_text(pgn_text):
+    if not isinstance(pgn_text, str) or not pgn_text.strip():
+        raise ValueError("PGN is empty")
+
+    pgn_io = io.StringIO(pgn_text)
+    game = chess.pgn.read_game(pgn_io)
+
+    if game is None:
+        raise ValueError("Unable to read PGN")
+
+    if game.errors:
+        raise ValueError(
+            "PGN contains errors: " +
+            "; ".join(str(e) for e in game.errors)
+        )
+
+    board = game.board()
+    moves = []
+    positions = [board.fen()]
+
+    for move in game.mainline_moves():
+        if len(moves) >= MAX_PLIES:
+            break
+
+        if move not in board.legal_moves:
+            raise ValueError("PGN contains an illegal move")
+
+        san = board.san(move)
+        uci = move.uci()
+
+        board.push(move)
+
+        moves.append({
+            "ply": len(moves) + 1,
+            "san": san,
+            "uci": uci
+        })
+
+        positions.append(board.fen())
+
+    return game, moves, positions
 
 
-def analyse_game(job_id, pgn_text, depth, seconds_per_position):
+@app.route("/api/parse", methods=["POST"])
+def parse_game():
+    data = request.get_json(silent=True) or {}
+
+    pgn_text = (
+        data.get("pgn")
+        or data.get("game")
+        or data.get("text")
+    )
+
     try:
-        if not (os.path.isfile(ENGINE_PATH) and os.access(ENGINE_PATH, os.X_OK)):
-            raise RuntimeError('لم يتم العثور على Stockfish في الخادم. تحقق من تثبيت المحرك أثناء النشر.')
+        game, moves, positions = parse_pgn_text(pgn_text)
 
-        game = chess.pgn.read_game(io.StringIO(pgn_text))
-        if game is None:
-            raise RuntimeError('ملف PGN فارغ أو غير صالح.')
-        if game.errors:
-            raise RuntimeError('ملف PGN يحتوي على أخطاء ولا يمكن تحليله بأمان.')
+        return jsonify({
+            "headers": dict(game.headers),
+            "moves": moves,
+            "positions": positions,
+            "move_count": len(moves)
+        })
 
-        moves = list(game.mainline_moves())
-        if not moves:
-            raise RuntimeError('المباراة لا تحتوي على نقلات.')
-        if len(moves) > MAX_PLIES:
-            raise RuntimeError(f'المباراة طويلة جدًا. الحد الحالي {MAX_PLIES} نصف نقلة.')
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 400
 
-        boards = []
-        board = game.board()
-        boards.append(board.copy(stack=False))
-        san_moves = []
-        for move in moves:
-            if move not in board.legal_moves:
-                raise RuntimeError('تحتوي المباراة على نقلة غير قانونية في PGN.')
-            san_moves.append(board.san(move))
-            board.push(move)
-            boards.append(board.copy(stack=False))
 
-        total = len(boards)
-        scores = [0.0] * total
-        best_sans = ['—'] * total
-        best_uci = [''] * total
-        second_scores = [None] * total
-        limit = chess.engine.Limit(time=seconds_per_position, depth=depth)
-        update_job(job_id, status='running', progress=0, total=len(moves), message='تم تجهيز المباراة. يبدأ Stockfish الآن.')
+# ---------------- ENGINE HELPERS ----------------
 
-        engine = chess.engine.SimpleEngine.popen_uci(ENGINE_PATH, timeout=15)
-        try:
-            options = {}
-            if 'Threads' in engine.options:
-                options['Threads'] = 1
-            if 'Hash' in engine.options:
-                options['Hash'] = 32
-            if options:
-                engine.configure(options)
+def get_engine_path():
+    path = STOCKFISH_PATH
 
-            for index, position in enumerate(boards):
-                if position.is_checkmate():
-                    scores[index] = -100.0
-                elif position.is_game_over(claim_draw=True):
-                    scores[index] = 0.0
-                else:
-                    # MultiPV gives a second-best line so 'Great' can be reserved
-                    # for positions where the played top move is clearly critical.
-                    infos = engine.analyse(position, limit, multipv=2)
-                    if isinstance(infos, dict):
-                        infos = [infos]
-                    info = infos[0]
-                    pov_score = info['score'].pov(position.turn)
-                    raw_score = pov_score.score(mate_score=10000)
-                    scores[index] = (raw_score or 0) / 100.0
-                    pv = info.get('pv') or []
-                    if pv:
-                        best_uci[index] = pv[0].uci()
-                        try:
-                            best_sans[index] = position.san(pv[0])
-                        except (ValueError, AssertionError):
-                            best_sans[index] = pv[0].uci()
-                    if len(infos) > 1:
-                        second_raw = infos[1]['score'].pov(position.turn).score(mate_score=10000)
-                        second_scores[index] = (second_raw or 0) / 100.0
-                if index < len(moves):
-                    update_job(job_id, progress=index + 1,
-                               message=f'تحليل الوضعية {index + 1} من {len(moves)}')
-        finally:
-            engine.quit()
+    if os.path.isfile(path):
+        return path
 
-        rows = []
-        blunders = mistakes = inaccuracies = 0
-        total_loss = 0.0
-        piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
-        # A small, conservative set of common first moves. This is only used
-        # to mark unmistakable early opening theory, not to pretend we have a full ECO book.
-        common_book_moves = {'e2e4','d2d4','c2c4','g1f3','e7e5','c7c5','e7e6','c7c6','d7d5','g8f6','d7d6','g7g6','b8c6','b8d7','f8c5','f8e7','f8b4','g8e7'}
-        for index, san in enumerate(san_moves):
-            # Each score is from the side-to-move perspective. The next position
-            # belongs to the opponent, so negate it to compare from mover's view.
-            loss = max(0.0, scores[index] + scores[index + 1])
-            played = moves[index]
-            mover = boards[index].turn
-            after_for_mover = -scores[index + 1]
-            is_best = bool(best_uci[index]) and played.uci() == best_uci[index]
-            second = second_scores[index]
-            best_gap = (scores[index] - second) if second is not None else 0.0
+    found = shutil.which(path)
 
-            # Conservative tactical heuristics for the special Chess.com-style labels.
-            moved_piece = boards[index].piece_at(played.from_square)
-            after_board = boards[index + 1]
-            sacrifice = False
-            if moved_piece and piece_values.get(moved_piece.piece_type, 0) >= 3:
-                target = played.to_square
-                attacked = after_board.is_attacked_by(not mover, target)
-                defended = after_board.is_attacked_by(mover, target)
-                sacrifice = attacked and not defended
+    if found:
+        return found
 
-            if scores[index] >= 2.5 and after_for_mover < 1.0 and loss >= 0.8:
-                label, category = 'تفويت فرصة', 'miss'
-            elif (is_best and sacrifice and loss <= 0.15
-                  and scores[index] < 2.5 and after_for_mover >= -0.5):
-                label, category = 'عبقرية', 'brilliant'
-            elif is_best and (best_gap >= 0.8 or
-                              (scores[index] <= -1.5 and after_for_mover >= -0.3) or
-                              (scores[index] <= 0.3 and after_for_mover >= 1.5)):
-                label, category = 'رائعة', 'great'
-            elif index < 8 and played.uci() in common_book_moves and loss <= 0.12:
-                label, category = 'افتتاحية', 'book'
-            elif loss <= 0.02:
-                label, category = 'الأفضل', 'best'
-            elif loss <= 0.10:
-                label, category = 'ممتازة', 'excellent'
-            elif loss <= 0.25:
-                label, category = 'جيدة', 'good'
-            elif loss <= 0.50:
-                label, category = 'غير دقيقة', 'inaccuracy'
-                inaccuracies += 1
-            elif loss <= 1.50:
-                label, category = 'خطأ', 'mistake'
-                mistakes += 1
-            else:
-                label, category = 'خطأ فادح', 'blunder'
-                blunders += 1
-            total_loss += min(loss, 5.0)
-            rows.append({
-                'ply': index + 1,
-                'san': san,
-                'uci': played.uci(),
-                'best': best_sans[index],
-                'loss': round(loss, 2),
-                'label': label,
-                'category': category,
-                'fen': boards[index + 1].fen(),
+    raise RuntimeError(
+        "Stockfish was not found. "
+        "Set STOCKFISH_PATH to the Stockfish executable."
+    )
+
+
+def score_to_cp(score):
+    """
+    Convert a python-chess PovScore into a comparable
+    centipawn-like number.
+
+    Positive = advantage for the requested side.
+    Negative = disadvantage for the requested side.
+    """
+
+    if score is None:
+        return 0
+
+    value = score.score(mate_score=100000)
+
+    if value is None:
+        return 0
+
+    return int(value)
+
+
+def classify_move(loss_cp, is_best):
+    """
+    BASAM classification thresholds.
+
+    loss_cp is measured in centipawns.
+    """
+
+    if loss_cp <= 10:
+        if is_best:
+            return {
+                "label": "الأفضل",
+                "category": "best",
+                "symbol": "★"
+            }
+
+        return {
+            "label": "ممتازة",
+            "category": "excellent",
+            "symbol": "!"
+        }
+
+    if loss_cp <= 25:
+        return {
+            "label": "ممتازة",
+            "category": "excellent",
+            "symbol": "!"
+        }
+
+    if loss_cp <= 50:
+        return {
+            "label": "جيدة",
+            "category": "good",
+            "symbol": "✓"
+        }
+
+    if loss_cp <= 100:
+        return {
+            "label": "غير دقيقة",
+            "category": "inaccuracy",
+            "symbol": "?!"
+        }
+
+    if loss_cp <= 200:
+        return {
+            "label": "خطأ",
+            "category": "mistake",
+            "symbol": "?"
+        }
+
+    return {
+        "label": "خطأ فادح",
+        "category": "blunder",
+        "symbol": "??"
+    }
+
+
+def calculate_accuracy(losses):
+    """
+    BASAM accuracy estimate.
+    This is not Chess.com's official accuracy formula.
+    """
+
+    if not losses:
+        return 100
+
+    total = sum(min(max(x, 0), 1000) for x in losses)
+    average = total / len(losses)
+
+    # Smooth penalty curve.
+    accuracy = 100 * (2.718281828 ** (-average / 350))
+
+    return round(max(0, min(100, accuracy)), 1)
+
+
+# ---------------- SINGLE MOVE ANALYSIS ----------------
+
+def analyze_one_move(engine, board, played_move, depth, seconds):
+    """
+    Compare:
+      1. Best engine move from the current position.
+      2. The move actually played from that same position.
+
+    Both evaluations use the side-to-move perspective.
+    """
+
+    mover = board.turn
+    limit = chess.engine.Limit(
+        depth=depth,
+        time=seconds
+    )
+
+    # First: unrestricted best move.
+    best_info = engine.analyse(
+        board,
+        limit
+    )
+
+    best_score_obj = best_info.get("score")
+    best_score = score_to_cp(
+        best_score_obj.pov(mover)
+        if best_score_obj else None
+    )
+
+    best_pv = best_info.get("pv", [])
+    best_move = best_pv[0] if best_pv else None
+
+    best_san = (
+        board.san(best_move)
+        if best_move and best_move in board.legal_moves
+        else "—"
+    )
+
+    # Second: force Stockfish to evaluate the played move.
+    played_info = engine.analyse(
+        board,
+        limit,
+        root_moves=[played_move]
+    )
+
+    played_score_obj = played_info.get("score")
+    played_score = score_to_cp(
+        played_score_obj.pov(mover)
+        if played_score_obj else None
+    )
+
+    # Difference between the best choice and the played move.
+    loss_cp = max(0, best_score - played_score)
+
+    is_best = (
+        best_move is not None
+        and played_move == best_move
+    )
+
+    classification = classify_move(
+        loss_cp,
+        is_best
+    )
+
+    return {
+        "best": best_san,
+        "best_uci": best_move.uci() if best_move else None,
+        "played_eval": round(played_score / 100, 2),
+        "best_eval": round(best_score / 100, 2),
+        "centipawn_loss": loss_cp,
+        "loss": round(loss_cp / 100, 2),
+        "is_best": is_best,
+        **classification
+    }
+
+
+# ---------------- FULL GAME ANALYSIS ----------------
+
+def run_analysis(job_id, pgn_text, depth, seconds):
+    try:
+        game, parsed_moves, positions = parse_pgn_text(pgn_text)
+
+        if not parsed_moves:
+            raise ValueError("The game contains no moves")
+
+        engine_path = get_engine_path()
+
+        results = []
+        losses = []
+
+        blunders = 0
+        mistakes = 0
+        inaccuracies = 0
+
+        with chess.engine.SimpleEngine.popen_uci(
+            engine_path,
+            timeout=max(30, seconds * 20)
+        ) as engine:
+
+            try:
+                engine.configure({
+                    "Threads": 1,
+                    "Hash": 128
+                })
+            except Exception:
+                pass
+
+            board = game.board()
+
+            for index, played_move in enumerate(
+                list(game.mainline_moves())[:MAX_PLIES]
+            ):
+
+                if played_move not in board.legal_moves:
+                    raise ValueError(
+                        f"Illegal move at ply {index + 1}"
+                    )
+
+                san = board.san(played_move)
+                uci = played_move.uci()
+                fen_before = board.fen()
+
+                evaluation = analyze_one_move(
+                    engine,
+                    board,
+                    played_move,
+                    depth,
+                    seconds
+                )
+
+                category = evaluation["category"]
+
+                if category == "blunder":
+                    blunders += 1
+
+                elif category == "mistake":
+                    mistakes += 1
+
+                elif category == "inaccuracy":
+                    inaccuracies += 1
+
+                result = {
+                    "ply": index + 1,
+                    "san": san,
+                    "uci": uci,
+                    "fen": fen_before,
+
+                    "best": evaluation["best"],
+                    "best_uci": evaluation["best_uci"],
+
+                    "loss": evaluation["loss"],
+                    "centipawn_loss": evaluation["centipawn_loss"],
+
+                    "played_eval": evaluation["played_eval"],
+                    "best_eval": evaluation["best_eval"],
+
+                    "is_best": evaluation["is_best"],
+
+                    "label": evaluation["label"],
+                    "category": category,
+                    "symbol": evaluation["symbol"]
+                }
+
+                results.append(result)
+                losses.append(
+                    evaluation["centipawn_loss"]
+                )
+
+                board.push(played_move)
+
+                # Update progress.
+                with jobs_lock:
+                    if job_id in jobs:
+                        jobs[job_id]["progress"] = round(
+                            (index + 1) / len(parsed_moves) * 100,
+                            1
+                        )
+
+                        jobs[job_id]["current_move"] = index + 1
+                        jobs[job_id]["move_count"] = len(parsed_moves)
+
+                        # Make completed moves available immediately.
+                        jobs[job_id]["partial_moves"] = results.copy()
+
+        accuracy = calculate_accuracy(losses)
+
+        final_result = {
+            "success": True,
+            "version": "11.0",
+
+            "moves": results,
+
+            "blunders": blunders,
+            "mistakes": mistakes,
+            "inaccuracies": inaccuracies,
+
+            "accuracy": accuracy,
+            "move_count": len(results),
+
+            "depth": depth,
+            "seconds": seconds,
+            "engine": "Stockfish",
+
+            "accuracy_note": (
+                "BASAM accuracy estimate; "
+                "not the official Chess.com accuracy formula."
+            ),
+
+            "headers": dict(game.headers)
+        }
+
+        with jobs_lock:
+            jobs[job_id].update({
+                "status": "completed",
+                "progress": 100,
+                "result": final_result,
+                "error": None
             })
 
-        accuracy = max(0, round(100 - (total_loss / (len(moves) * 5) * 100)))
-        result = {
-            'moves': rows,
-            'blunders': blunders,
-            'mistakes': mistakes,
-            'inaccuracies': inaccuracies,
-            'accuracy': accuracy,
-            'move_count': len(moves),
-            'depth': depth,
-            'engine': 'Stockfish (server-side)',
-        }
-        update_job(job_id, status='completed', progress=len(moves), result=result,
-                   message='اكتمل التحليل بنجاح.')
-    except Exception as exc:
-        update_job(job_id, status='failed', error=str(exc), message='تعذر إكمال التحليل.')
+    except Exception as e:
+        logging.exception("Analysis failed")
+
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id].update({
+                    "status": "failed",
+                    "error": str(e)
+                })
 
 
-@app.post('/api/parse')
-def parse_game():
-    payload = request.get_json(silent=True) or {}
-    pgn_text = payload.get('pgn', '')
+# ---------------- START ANALYSIS ----------------
+
+@app.route("/api/analyze", methods=["POST"])
+def analyze():
+    data = request.get_json(silent=True) or {}
+
+    pgn_text = (
+        data.get("pgn")
+        or data.get("game")
+        or data.get("text")
+    )
+
     if not isinstance(pgn_text, str) or not pgn_text.strip():
-        return jsonify(error='لم يصل PGN صالح للمباراة.'), 400
-    if len(pgn_text) > 250_000:
-        return jsonify(error='ملف المباراة أكبر من الحد المسموح.'), 413
-    game = chess.pgn.read_game(io.StringIO(pgn_text))
-    if game is None or game.errors:
-        return jsonify(error='ملف PGN فارغ أو غير صالح.'), 400
-    board = game.board()
-    positions = [board.fen()]
-    rows = []
-    for move in game.mainline_moves():
-        if move not in board.legal_moves:
-            return jsonify(error='تحتوي المباراة على نقلة غير قانونية.'), 400
-        san = board.san(move)
-        board.push(move)
-        rows.append({'san': san, 'uci': move.uci()})
-        positions.append(board.fen())
-        if len(rows) > MAX_PLIES:
-            return jsonify(error=f'المباراة أطول من الحد الحالي ({MAX_PLIES} نصف نقلة).'), 400
-    return jsonify(headers={k: game.headers.get(k, '') for k in ('White', 'Black', 'Date', 'Result', 'TimeControl', 'WhiteElo', 'BlackElo')},
-                   positions=positions, moves=rows)
+        return jsonify({
+            "error": "PGN is required"
+        }), 400
 
-
-@app.post('/api/analyze')
-def start_analysis():
-    payload = request.get_json(silent=True) or {}
-    pgn_text = payload.get('pgn', '')
-    if not isinstance(pgn_text, str) or not pgn_text.strip():
-        return jsonify(error='لم يصل PGN صالح للمباراة.'), 400
-    if len(pgn_text) > 250_000:
-        return jsonify(error='ملف المباراة أكبر من الحد المسموح.'), 413
     try:
-        depth = int(payload.get('depth', 10))
-        seconds = float(payload.get('seconds', 0.12))
-    except (TypeError, ValueError):
-        return jsonify(error='إعدادات التحليل غير صالحة.'), 400
-    depth = max(8, min(depth, 14))
-    seconds = max(0.08, min(seconds, 0.35))
-    job_id = uuid.uuid4().hex
-    with JOBS_LOCK:
-        JOBS[job_id] = {'status': 'queued', 'progress': 0, 'total': 0,
-                        'message': 'تم وضع المباراة في قائمة التحليل.'}
-    POOL.submit(analyse_game, job_id, pgn_text, depth, seconds)
-    return jsonify(job_id=job_id), 202
+        depth = int(data.get("depth", DEFAULT_DEPTH))
+        seconds = float(data.get("seconds", DEFAULT_SECONDS))
+
+        depth = max(8, min(depth, MAX_DEPTH))
+        seconds = max(0.1, min(seconds, MAX_SECONDS))
+
+        # Validate PGN before creating the job.
+        game, parsed_moves, _ = parse_pgn_text(pgn_text)
+
+        if not parsed_moves:
+            return jsonify({
+                "error": "No moves found in PGN"
+            }), 400
+
+        job_id = str(uuid.uuid4())
+
+        with jobs_lock:
+            jobs[job_id] = {
+                "status": "queued",
+                "progress": 0,
+                "current_move": 0,
+                "move_count": len(parsed_moves),
+                "partial_moves": [],
+                "result": None,
+                "error": None,
+                "created_at": time.time()
+            }
+
+        executor.submit(
+            run_analysis,
+            job_id,
+            pgn_text,
+            depth,
+            seconds
+        )
+
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "status": "queued",
+            "move_count": len(parsed_moves),
+            "depth": depth,
+            "seconds": seconds,
+            "version": "11.0"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 400
 
 
-@app.get('/api/jobs/<job_id>')
-def job_status(job_id):
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if job is None:
-            return jsonify(error='لم يتم العثور على مهمة التحليل. ربما أعيد تشغيل الخادم.'), 404
-        return jsonify(job)
+# ---------------- JOB STATUS ----------------
+
+@app.route("/api/jobs/<job_id>", methods=["GET"])
+def get_job(job_id):
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+        if not job:
+            return jsonify({
+                "error": "Job not found"
+            }), 404
+
+        response = {
+            "job_id": job_id,
+            "status": job["status"],
+            "progress": job["progress"],
+            "current_move": job["current_move"],
+            "move_count": job["move_count"],
+            "partial_moves": job["partial_moves"],
+            "error": job["error"]
+        }
+
+        if job["status"] == "completed":
+            response["result"] = job["result"]
+
+        return jsonify(response)
 
 
-@app.errorhandler(413)
-def too_large(_error):
-    return jsonify(error='الطلب أكبر من الحد المسموح.'), 413
+# ---------------- ERROR HANDLERS ----------------
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        "error": "Endpoint not found"
+    }), 404
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', '10000')))
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({
+        "error": "Internal server error"
+    }), 500
+
+
+# ---------------- START SERVER ----------------
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
